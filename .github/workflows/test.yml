@@ -28,3 +28,9 @@ jobs:
           name: junit-xml-${{ github.run_id }}-${{ github.run_attempt }}
           path: build/test-results/test/*.xml
           retention-days: 90
+      - name: Upload test results to FlakeSince
+        if: always()
+        uses: TheStrawberry-09/flakesince/action@main
+        with:
+          url: ${{ secrets.FLAKESINCE_URL }}
+          api-key: ${{ secrets.FLAKESINCE_API_KEY }}
