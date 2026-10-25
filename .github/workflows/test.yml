@@ -30,7 +30,7 @@ jobs:
           retention-days: 90
       - name: Upload test results to FlakeSince
         if: always()
-        uses: TheStrawberry-09/flakesince/action@main
+        uses: TheStrawberry-09/flakesince/action@v0
         with:
           url: ${{ secrets.FLAKESINCE_URL }}
           api-key: ${{ secrets.FLAKESINCE_API_KEY }}
