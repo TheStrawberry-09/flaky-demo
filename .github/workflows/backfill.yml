@@ -1,0 +1,66 @@
+name: backfill
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send saved test results to FlakeSince
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          FLAKESINCE_URL: ${{ secrets.FLAKESINCE_URL }}
+          FLAKESINCE_API_KEY: ${{ secrets.FLAKESINCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | select(.name | startswith("junit-xml-")) | [.id, .name, .workflow_run.head_sha, .workflow_run.head_branch, .created_at] | @tsv' \
+            > artifacts.tsv
+          echo "Found $(wc -l < artifacts.tsv) saved result sets"
+
+          accepted=0
+          failed=0
+          while IFS=$'\t' read -r -u 3 id name sha branch created; do
+            attempt="${name##*-}"
+            rest="${name%-*}"
+            run_id="${rest##*-}"
+
+            dir="results/$id"
+            mkdir -p "$dir"
+            gh api "repos/$REPO/actions/artifacts/$id/zip" > "$dir.zip"
+            unzip -q -o "$dir.zip" -d "$dir"
+
+            {
+              echo '<testsuites>'
+              for f in "$dir"/*.xml; do
+                sed -e 's/<?xml[^>]*?>//' "$f"
+              done
+              echo '</testsuites>'
+            } > "$dir.xml"
+
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 60 -X POST \
+              -H "Authorization: Bearer $FLAKESINCE_API_KEY" \
+              -H "X-Commit-Sha: $sha" \
+              -H "X-Branch: $branch" \
+              -H "X-Run-Id: $run_id" \
+              -H "X-Run-Attempt: $attempt" \
+              -H "X-Started-At: $created" \
+              --data-binary "@$dir.xml" \
+              "${FLAKESINCE_URL%/}/ingest") || status=000
+
+            echo "$name: HTTP $status"
+            if [ "$status" = "202" ]; then
+              accepted=$((accepted + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done 3< artifacts.tsv
+
+          echo "Accepted: $accepted, failed: $failed"
